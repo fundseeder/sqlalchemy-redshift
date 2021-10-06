@@ -448,6 +448,9 @@ class RedshiftDialectMixin(object):
 
     name = 'redshift'
     max_identifier_length = 127
+    supports_sequences = False
+    preexecute_autoincrement_sequences = False
+    postfetch_lastrowid = True
 
     statement_compiler = RedshiftCompiler
     ddl_compiler = RedshiftDDLCompiler
