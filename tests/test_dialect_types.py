@@ -1,6 +1,8 @@
 import pytest
 import sqlalchemy_redshift.dialect
 import sqlalchemy
+from sqlalchemy.engine import reflection
+from sqlalchemy import MetaData
 
 
 def test_defined_types():
@@ -30,13 +32,31 @@ def test_defined_types():
     assert sqlalchemy_redshift.dialect.DOUBLE_PRECISION \
         is sqlalchemy.dialects.postgresql.DOUBLE_PRECISION
 
+    assert sqlalchemy_redshift.dialect.GEOMETRY \
+        is not sqlalchemy.sql.sqltypes.TEXT
+
+    assert sqlalchemy_redshift.dialect.SUPER \
+        is not sqlalchemy.sql.sqltypes.TEXT
+
     assert sqlalchemy_redshift.dialect.TIMESTAMPTZ \
         is not sqlalchemy.sql.sqltypes.TIMESTAMP
 
     assert sqlalchemy_redshift.dialect.TIMETZ \
         is not sqlalchemy.sql.sqltypes.TIME
 
+    assert sqlalchemy_redshift.dialect.HLLSKETCH \
+        is not sqlalchemy.sql.sqltypes.TEXT
+
+
 custom_type_inheritance = [
+    (
+        sqlalchemy_redshift.dialect.GEOMETRY,
+        sqlalchemy.sql.sqltypes.TEXT
+    ),
+    (
+        sqlalchemy_redshift.dialect.SUPER,
+        sqlalchemy.sql.sqltypes.TEXT
+    ),
     (
         sqlalchemy_redshift.dialect.TIMESTAMP,
         sqlalchemy.sql.sqltypes.TIMESTAMP
@@ -44,6 +64,10 @@ custom_type_inheritance = [
     (
         sqlalchemy_redshift.dialect.TIMETZ,
         sqlalchemy.sql.sqltypes.TIME
+    ),
+    (
+        sqlalchemy_redshift.dialect.HLLSKETCH,
+        sqlalchemy.sql.sqltypes.TEXT
     ),
 ]
 
@@ -55,6 +79,26 @@ def test_custom_types_extend_super_type(custom_type, super_type):
 
 
 column_and_ddl = [
+    (
+        sqlalchemy_redshift.dialect.GEOMETRY,
+        (
+            u"\nCREATE TABLE t1 ("
+            u"\n\tid INTEGER NOT NULL, "
+            u"\n\tname VARCHAR, "
+            u"\n\ttest_col GEOMETRY, "
+            u"\n\tPRIMARY KEY (id)\n)\n\n"
+        )
+    ),
+    (
+        sqlalchemy_redshift.dialect.SUPER,
+        (
+            u"\nCREATE TABLE t1 ("
+            u"\n\tid INTEGER NOT NULL, "
+            u"\n\tname VARCHAR, "
+            u"\n\ttest_col SUPER, "
+            u"\n\tPRIMARY KEY (id)\n)\n\n"
+        )
+    ),
     (
         sqlalchemy_redshift.dialect.TIMESTAMPTZ,
         (
@@ -72,6 +116,16 @@ column_and_ddl = [
             u"\n\tid INTEGER NOT NULL, "
             u"\n\tname VARCHAR, "
             u"\n\ttest_col TIMETZ, "
+            u"\n\tPRIMARY KEY (id)\n)\n\n"
+        )
+    ),
+    (
+        sqlalchemy_redshift.dialect.HLLSKETCH,
+        (
+            u"\nCREATE TABLE t1 ("
+            u"\n\tid INTEGER NOT NULL, "
+            u"\n\tname VARCHAR, "
+            u"\n\ttest_col HLLSKETCH, "
             u"\n\tPRIMARY KEY (id)\n)\n\n"
         )
     ),
@@ -96,3 +150,40 @@ def test_custom_types_ddl_generation(
     create_table = sqlalchemy.schema.CreateTable(table)
     actual = compiler.process(create_table)
     assert expected == actual
+
+
+redshift_specific_datatypes = [
+    sqlalchemy_redshift.dialect.GEOMETRY,
+    sqlalchemy_redshift.dialect.SUPER,
+    sqlalchemy_redshift.dialect.TIMETZ,
+    sqlalchemy_redshift.dialect.TIMESTAMPTZ,
+    sqlalchemy_redshift.dialect.HLLSKETCH
+]
+
+
+@pytest.mark.parametrize("custom_datatype", redshift_specific_datatypes)
+def test_custom_types_reflection_inspection(
+        custom_datatype, redshift_engine
+):
+    metadata = MetaData(bind=redshift_engine)
+    sqlalchemy.Table(
+        't1',
+        metadata,
+        sqlalchemy.Column('id', sqlalchemy.INTEGER, primary_key=True),
+        sqlalchemy.Column('name', sqlalchemy.String),
+        sqlalchemy.Column('test_col', custom_datatype),
+        schema='public'
+    )
+    metadata.create_all()
+    inspect = reflection.Inspector.from_engine(redshift_engine)
+
+    actual = inspect.get_columns(table_name='t1', schema='public')
+    assert len(actual) == 3
+    assert isinstance(actual[2]['type'], custom_datatype)
+
+
+@pytest.mark.parametrize("custom_datatype", redshift_specific_datatypes)
+def test_custom_type_compilation(custom_datatype):
+    dt = custom_datatype()
+    compiled_dt = dt.compile()
+    assert compiled_dt == dt.__visit_name__
